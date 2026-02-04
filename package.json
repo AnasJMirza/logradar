@@ -1,0 +1,189 @@
+{
+  "name": "logradar",
+  "displayName": "LogRadar",
+  "description": "Stop Shipping Debug Code to Production. Analyze and clean console statements across your entire codebase.",
+  "version": "0.2.0",
+  "icon": "icon.png",
+  "publisher": "anas",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "console",
+    "log",
+    "debug",
+    "javascript",
+    "typescript",
+    "cleanup",
+    "linter"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anasjmirza/logradar.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anasjmirza/logradar/issues"
+  },
+  "homepage": "https://v0-log-radar-landing-page.vercel.app/",
+  "author": {
+    "name": "Anas Javed Mirza",
+    "url": "https://anasjmirza.vercel.app"
+  },
+  "license": "MIT",
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "logradar.removeAllConsole",
+        "title": "LogRadar: Remove All Console (Current File)"
+      },
+      {
+        "command": "logradar.removeConsoleLogs",
+        "title": "LogRadar: Remove console.log (Current File)"
+      },
+      {
+        "command": "logradar.removeConsoleWarns",
+        "title": "LogRadar: Remove console.warn (Current File)"
+      },
+      {
+        "command": "logradar.removeConsoleErrors",
+        "title": "LogRadar: Remove console.error (Current File)"
+      },
+      {
+        "command": "logradar.removeConsoleDebugs",
+        "title": "LogRadar: Remove console.debug (Current File)"
+      },
+      {
+        "command": "logradar.analyzeWorkspace",
+        "title": "LogRadar: Analyze Entire Workspace"
+      },
+      {
+        "command": "logradar.removeAllFromWorkspace",
+        "title": "LogRadar: Remove All Console (Entire Workspace)"
+      },
+      {
+        "command": "logradar.removeLogsFromWorkspace",
+        "title": "LogRadar: Remove console.log (Entire Workspace)"
+      },
+      {
+        "command": "logradar.removeWarnsFromWorkspace",
+        "title": "LogRadar: Remove console.warn (Entire Workspace)"
+      },
+      {
+        "command": "logradar.removeErrorsFromWorkspace",
+        "title": "LogRadar: Remove console.error (Entire Workspace)"
+      },
+      {
+        "command": "logradar.removeDebugsFromWorkspace",
+        "title": "LogRadar: Remove console.debug (Entire Workspace)"
+      },
+      {
+        "command": "logradar.toggleHighlighting",
+        "title": "LogRadar: Toggle Highlighting"
+      },
+      {
+        "command": "logradar.showStatistics",
+        "title": "LogRadar: Show Statistics (Current File)"
+      }
+    ],
+    "configuration": {
+      "title": "LogRadar",
+      "properties": {
+        "logradar.enableHighlighting": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable console statement highlighting"
+        },
+        "logradar.logColor": {
+          "type": "string",
+          "default": "rgba(0, 123, 255, 0.2)",
+          "description": "Background color for console.log"
+        },
+        "logradar.logBorderColor": {
+          "type": "string",
+          "default": "rgba(0, 123, 255, 0.5)",
+          "description": "Border color for console.log"
+        },
+        "logradar.warnColor": {
+          "type": "string",
+          "default": "rgba(255, 193, 7, 0.2)",
+          "description": "Background color for console.warn"
+        },
+        "logradar.warnBorderColor": {
+          "type": "string",
+          "default": "rgba(255, 193, 7, 0.5)",
+          "description": "Border color for console.warn"
+        },
+        "logradar.errorColor": {
+          "type": "string",
+          "default": "rgba(220, 53, 69, 0.2)",
+          "description": "Background color for console.error"
+        },
+        "logradar.errorBorderColor": {
+          "type": "string",
+          "default": "rgba(220, 53, 69, 0.5)",
+          "description": "Border color for console.error"
+        },
+        "logradar.debugColor": {
+          "type": "string",
+          "default": "rgba(40, 167, 69, 0.2)",
+          "description": "Background color for console.debug"
+        },
+        "logradar.debugBorderColor": {
+          "type": "string",
+          "default": "rgba(40, 167, 69, 0.5)",
+          "description": "Border color for console.debug"
+        },
+        "logradar.excludeFolders": {
+          "type": "array",
+          "default": [
+            "node_modules",
+            ".next",
+            ".vercel",
+            "dist",
+            "build",
+            "out",
+            ".nuxt",
+            ".output",
+            ".cache",
+            ".turbo",
+            ".git",
+            "coverage",
+            ".vscode",
+            ".idea"
+          ],
+          "description": "Folders to exclude from workspace analysis and removal operations",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/vscode": "^1.75.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.39.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.52.0"
+  },
+  "dependencies": {
+    "vsce": "^2.15.0"
+  }
+}
