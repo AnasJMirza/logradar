@@ -1,5 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as parser from '@babel/parser';
+import traverse from '@babel/traverse';
+import generate from '@babel/generator';
 
 let logDecoration: vscode.TextEditorDecorationType;
 let warnDecoration: vscode.TextEditorDecorationType;
@@ -207,6 +210,17 @@ function getExcludePattern(): string {
     return `**/{${excludeFolders.join(',')}}/**`;
 }
 
+function getParserPlugins(filePath: string): any[] {
+    const ext = path.extname(filePath);
+    const plugins: any[] = ['jsx'];
+    
+    if (ext === '.ts' || ext === '.tsx') {
+        plugins.push('typescript');
+    }
+    
+    return plugins;
+}
+
 async function analyzeWorkspace() {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
@@ -240,7 +254,6 @@ async function analyzeWorkspace() {
             files: []
         };
 
-        // Find all JS/TS files with configurable exclude pattern
         const files = await vscode.workspace.findFiles(
             '**/*.{js,ts,jsx,tsx}',
             excludePattern
@@ -255,7 +268,7 @@ async function analyzeWorkspace() {
                 const document = await vscode.workspace.openTextDocument(file);
                 const text = document.getText();
 
-                const fileStats = analyzeFileContent(text, file.fsPath);
+                const fileStats = analyzeFileContentWithAST(text, file.fsPath);
                 
                 if (fileStats.total > 0) {
                     stats.files.push(fileStats);
@@ -267,7 +280,6 @@ async function analyzeWorkspace() {
                     stats.debug += fileStats.debug;
                 }
             } catch (error) {
-                // Skip files that can't be opened
                 console.error(`Error reading file ${file.fsPath}:`, error);
             }
 
@@ -281,12 +293,70 @@ async function analyzeWorkspace() {
 
         progress.report({ increment: 100, message: "Analysis complete!" });
 
-        // Display results
         displayWorkspaceStats(stats);
     });
 }
 
-function analyzeFileContent(text: string, filePath: string): FileStats {
+function analyzeFileContentWithAST(text: string, filePath: string): FileStats {
+    const stats: FileStats = {
+        filePath,
+        log: 0,
+        warn: 0,
+        error: 0,
+        debug: 0,
+        total: 0
+    };
+
+    try {
+        const plugins = getParserPlugins(filePath);
+        const ast = parser.parse(text, {
+            sourceType: 'module',
+            plugins: plugins,
+            errorRecovery: true
+        });
+
+        traverse(ast, {
+            CallExpression(path) {
+                const callee = path.node.callee;
+                
+                // Check if it's console.X()
+                if (
+                    callee.type === 'MemberExpression' &&
+                    callee.object.type === 'Identifier' &&
+                    callee.object.name === 'console' &&
+                    callee.property.type === 'Identifier'
+                ) {
+                    const method = callee.property.name;
+                    
+                    switch (method) {
+                        case 'log':
+                            stats.log++;
+                            break;
+                        case 'warn':
+                            stats.warn++;
+                            break;
+                        case 'error':
+                            stats.error++;
+                            break;
+                        case 'debug':
+                        case 'info':
+                            stats.debug++;
+                            break;
+                    }
+                    stats.total++;
+                }
+            }
+        });
+    } catch (error) {
+        // If AST parsing fails, fall back to regex
+        console.error(`AST parsing failed for ${filePath}, using regex fallback:`, error);
+        return analyzeFileContentWithRegex(text, filePath);
+    }
+
+    return stats;
+}
+
+function analyzeFileContentWithRegex(text: string, filePath: string): FileStats {
     const stats: FileStats = {
         filePath,
         log: 0,
@@ -362,7 +432,6 @@ function displayWorkspaceStats(stats: WorkspaceStats) {
     outputChannel.appendLine('\n' + '='.repeat(80));
     outputChannel.appendLine('\n📄 FILES WITH CONSOLE STATEMENTS:\n');
 
-    // Sort files by total count (descending)
     stats.files.sort((a, b) => b.total - a.total);
 
     stats.files.forEach((file, index) => {
@@ -376,7 +445,6 @@ function displayWorkspaceStats(stats: WorkspaceStats) {
     outputChannel.appendLine('\n💡 Tip: Use "LogRadar: Remove [type] from Workspace" commands to clean up!');
     outputChannel.appendLine('⚙️  Tip: Configure excluded folders in Settings → LogRadar → Exclude Folders\n');
 
-    // Show summary notification
     vscode.window.showInformationMessage(
         `Found ${stats.totalStatements} console statements in ${stats.totalFiles} files`,
         'View Details'
@@ -435,30 +503,24 @@ async function removeFromWorkspace(types: string[]) {
                 const document = await vscode.workspace.openTextDocument(file);
                 const text = document.getText();
 
-                const typesPattern = types.join('|');
-                const regex = new RegExp(`^\\s*console\\.(${typesPattern})\\(.*\\);?\\s*$`, 'gm');
-                
-                const matches = text.match(regex);
-                const count = matches ? matches.length : 0;
+                const result = removeConsoleStatementsWithAST(text, types, file.fsPath);
 
-                if (count > 0) {
-                    const newText = text.replace(new RegExp(`^\\s*console\\.(${typesPattern})\\(.*\\);?\\s*\\n?`, 'gm'), '');
-                    
+                if (result.count > 0) {
                     const edit = new vscode.WorkspaceEdit();
                     const fullRange = new vscode.Range(
                         document.positionAt(0),
                         document.positionAt(text.length)
                     );
-                    edit.replace(file, fullRange, newText);
+                    edit.replace(file, fullRange, result.code);
                     
                     await vscode.workspace.applyEdit(edit);
                     await document.save();
 
-                    totalRemoved += count;
+                    totalRemoved += result.count;
                     filesModified++;
 
                     const relativePath = vscode.workspace.asRelativePath(file.fsPath);
-                    outputChannel.appendLine(`✅ ${relativePath} - Removed ${count} statement(s)`);
+                    outputChannel.appendLine(`✅ ${relativePath} - Removed ${result.count} statement(s)`);
                 }
             } catch (error) {
                 const relativePath = vscode.workspace.asRelativePath(file.fsPath);
@@ -491,6 +553,66 @@ async function removeFromWorkspace(types: string[]) {
     }
 }
 
+function removeConsoleStatementsWithAST(code: string, types: string[], filePath: string): { code: string; count: number } {
+    let count = 0;
+    
+    try {
+        const plugins = getParserPlugins(filePath);
+        const ast = parser.parse(code, {
+            sourceType: 'module',
+            plugins: plugins,
+            errorRecovery: true
+        });
+
+        traverse(ast, {
+            ExpressionStatement(path: { node: { expression: any; }; remove: () => void; }) {
+                const expression = path.node.expression;
+                
+                // Check if it's a console statement
+                if (
+                    expression.type === 'CallExpression' &&
+                    expression.callee.type === 'MemberExpression' &&
+                    expression.callee.object.type === 'Identifier' &&
+                    expression.callee.object.name === 'console' &&
+                    expression.callee.property.type === 'Identifier'
+                ) {
+                    const method = expression.callee.property.name;
+                    
+                    if (types.includes(method)) {
+                        path.remove();
+                        count++;
+                    }
+                }
+            }
+        });
+
+        const output = generate(ast, {
+            retainLines: true,
+            compact: false
+        });
+
+        return { code: output.code, count };
+    } catch (error) {
+        console.error(`AST removal failed for ${filePath}:`, error);
+        // Fallback to regex if AST fails
+        return removeConsoleStatementsWithRegex(code, types);
+    }
+}
+
+function removeConsoleStatementsWithRegex(code: string, types: string[]): { code: string; count: number } {
+    const typesPattern = types.join('|');
+    const regex = new RegExp(
+        `[ \\t]*console\\.(${typesPattern})\\([^)]*\\);?[ \\t]*\\r?\\n?`,
+        'g'
+    );
+    
+    const matches = code.match(regex);
+    const count = matches ? matches.length : 0;
+    const newCode = code.replace(regex, '');
+    
+    return { code: newCode, count };
+}
+
 function removeConsoleStatementsFromFile(types: string[]) {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -501,31 +623,25 @@ function removeConsoleStatementsFromFile(types: string[]) {
     const document = editor.document;
     const text = document.getText();
     
-    const typesPattern = types.join('|');
-    const regex = new RegExp(`^\\s*console\\.(${typesPattern})\\(.*\\);?\\s*$`, 'gm');
-    
-    const matches = text.match(regex);
-    const count = matches ? matches.length : 0;
+    const result = removeConsoleStatementsWithAST(text, types, document.fileName);
 
-    if (count === 0) {
+    if (result.count === 0) {
         const typeNames = types.map(t => `console.${t}`).join(', ');
         vscode.window.showInformationMessage(`No ${typeNames} statements found!`);
         return;
     }
 
-    const newText = text.replace(new RegExp(`^\\s*console\\.(${typesPattern})\\(.*\\);?\\s*\\n?`, 'gm'), '');
-    
     const fullRange = new vscode.Range(
         document.positionAt(0),
         document.positionAt(text.length)
     );
     
     editor.edit(editBuilder => {
-        editBuilder.replace(fullRange, newText);
+        editBuilder.replace(fullRange, result.code);
     }).then(success => {
         if (success) {
             const typeNames = types.length === 1 ? `console.${types[0]}` : 'console';
-            vscode.window.showInformationMessage(`✅ Removed ${count} ${typeNames} statement${count > 1 ? 's' : ''}!`);
+            vscode.window.showInformationMessage(`✅ Removed ${result.count} ${typeNames} statement${result.count > 1 ? 's' : ''}!`);
         }
     });
 }
@@ -572,6 +688,86 @@ function highlightConsole(editor: vscode.TextEditor) {
         return;
     }
 
+    const text = editor.document.getText();
+    const logRanges: vscode.Range[] = [];
+    const warnRanges: vscode.Range[] = [];
+    const errorRanges: vscode.Range[] = [];
+    const debugRanges: vscode.Range[] = [];
+
+    try {
+        const plugins = getParserPlugins(editor.document.fileName);
+        const ast = parser.parse(text, {
+            sourceType: 'module',
+            plugins: plugins,
+            errorRecovery: true
+        });
+
+        traverse(ast, {
+            CallExpression(path: { node: { callee: any; }; }) {
+                const callee = path.node.callee;
+                
+                if (
+                    callee.type === 'MemberExpression' &&
+                    callee.object.type === 'Identifier' &&
+                    callee.object.name === 'console' &&
+                    callee.property.type === 'Identifier' &&
+                    callee.loc
+                ) {
+                    const method = callee.property.name;
+                    const start = callee.loc.start;
+                    const end = callee.loc.end;
+                    
+                    const startPos = new vscode.Position(start.line - 1, start.column);
+                    const endPos = new vscode.Position(end.line - 1, end.column);
+                    const range = new vscode.Range(startPos, endPos);
+
+                    switch (method) {
+                        case 'log':
+                            logRanges.push(range);
+                            break;
+                        case 'warn':
+                            warnRanges.push(range);
+                            break;
+                        case 'error':
+                            errorRanges.push(range);
+                            break;
+                        case 'debug':
+                        case 'info':
+                            debugRanges.push(range);
+                            break;
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        // Fallback to regex highlighting if AST parsing fails
+        highlightConsoleWithRegex(editor);
+        return;
+    }
+
+    currentCounts = {
+        log: logRanges.length,
+        warn: warnRanges.length,
+        error: errorRanges.length,
+        debug: debugRanges.length
+    };
+
+    editor.setDecorations(logDecoration, logRanges);
+    editor.setDecorations(warnDecoration, warnRanges);
+    editor.setDecorations(errorDecoration, errorRanges);
+    editor.setDecorations(debugDecoration, debugRanges);
+
+    const totalCount = logRanges.length + warnRanges.length + errorRanges.length + debugRanges.length;
+    if (totalCount > 0) {
+        statusBarItem.text = `$(debug-console) ${totalCount} console`;
+        statusBarItem.tooltip = `📘 log: ${logRanges.length} | ⚠️ warn: ${warnRanges.length} | ❌ error: ${errorRanges.length} | 🐛 debug: ${debugRanges.length}\n\nClick for details`;
+        statusBarItem.show();
+    } else {
+        statusBarItem.hide();
+    }
+}
+
+function highlightConsoleWithRegex(editor: vscode.TextEditor) {
     const text = editor.document.getText();
     const logRanges: vscode.Range[] = [];
     const warnRanges: vscode.Range[] = [];
